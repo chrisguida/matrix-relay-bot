@@ -24,7 +24,7 @@ use matrix_sdk::{
 use tokio::time::{sleep, Duration};
 use url::Url;
 
-async fn link(from_room: Room, to_room: Room, two_way: bool) {}
+// async fn link(from_room: Room, to_room: Room, two_way: bool) {}
 
 // Whenever we see a new stripped room member event, we've asked our client to
 // call this function. So what exactly are we doing then?
@@ -38,29 +38,38 @@ async fn on_stripped_state_member(
         return;
     }
 
+    // // dumb hack to refresh room state, since the sdk thinks the room is Left. this makes it so the bot can never rejoin a room it's already been in xD
+    // let room = client.get_room(&room.room_id()).unwrap();
+
     // looks like the room is an invited room, let's attempt to join then
     if let Room::Invited(room) = room {
-        println!("Autojoining room {}", room.room_id());
-        let mut delay = 2;
+        tokio::spawn(async move {
+            println!("Autojoining room {}", room.room_id());
+            let mut delay = 2;
 
-        while let Err(err) = room.accept_invitation().await {
-            // retry autojoin due to synapse sending invites, before the
-            // invited user can join for more information see
-            // https://github.com/matrix-org/synapse/issues/4345
-            eprintln!(
-                "Failed to join room {} ({err:?}), retrying in {delay}s",
-                room.room_id()
-            );
+            while let Err(err) = room.accept_invitation().await {
+                println!("tried autojoining room");
+                // retry autojoin due to synapse sending invites, before the
+                // invited user can join for more information see
+                // https://github.com/matrix-org/synapse/issues/4345
+                eprintln!(
+                    "Failed to join room {} ({err:?}), retrying in {delay}s",
+                    room.room_id()
+                );
 
-            sleep(Duration::from_secs(delay)).await;
-            delay *= 2;
+                sleep(Duration::from_secs(delay)).await;
+                delay *= 2;
 
-            if delay > 3600 {
-                eprintln!("Can't join room {} ({err:?})", room.room_id());
-                break;
+                if delay > 3600 {
+                    eprintln!("Can't join room {} ({err:?})", room.room_id());
+                    break;
+                }
             }
-        }
-        println!("Successfully joined room {}", room.room_id());
+            println!("successfully joined room EXTRA MESSAGE");
+            println!("Successfully joined room {}", room.room_id());
+        });
+    } else {
+        println!("Room not invited, ignoring");
     }
 }
 
@@ -73,7 +82,7 @@ async fn on_room_message(
     if !two_way_map.contains_key(room.room_id()) {
         return;
     }
-    // self.
+
     if let Room::Joined(tx_room) = room {
         if let OriginalSyncRoomMessageEvent {
             content:
@@ -195,9 +204,6 @@ fn get_two_way_map_from_pairs(
     for (tor_room_id, clearnet_room_id) in room_id_pairs {
         println!("Fetching tor_room = {:?}", &tor_room_id);
         let tor_room = client.get_room(&tor_room_id).unwrap();
-        // {
-        //     Ok
-        // };
         println!("Fetching clearnet_room = {clearnet_room_id}");
         let clearnet_room = client.get_room(&clearnet_room_id).unwrap();
         two_way_map.insert(tor_room_id.clone(), clearnet_room);
@@ -230,15 +236,15 @@ async fn relay(homeserver_url: String, username: &str, password: &str) -> anyhow
     client.sync_once(SyncSettings::default()).await.unwrap();
 
     // get tor <-> clearnet room map and add event handler to relay messages between corresponding room pairs
-    let tor_rooms = get_all_tor_rooms(&client).await?;
-    println!("Tor rooms = {:?}", tor_rooms);
-    let room_id_pairs = get_room_id_pairs(&client, tor_rooms).await?;
+    // let tor_rooms = get_all_tor_rooms(&client).await?;
+    // println!("Tor rooms = {:?}", tor_rooms);
+    // let room_id_pairs = get_room_id_pairs(&client, tor_rooms).await?;
 
-    println!("Room ID pairs = {:?}", room_id_pairs);
+    // println!("Room ID pairs = {:?}", room_id_pairs);
 
-    let two_way_map = get_two_way_map_from_pairs(&client, room_id_pairs);
+    // let two_way_map = get_two_way_map_from_pairs(&client, room_id_pairs);
 
-    println!("Two way map = {:?}", two_way_map);
+    // println!("Two way map = {:?}", two_way_map);
 
     // now that we've synced, let's attach a handler for incoming room messages, so
     // we can react on it
@@ -249,7 +255,8 @@ async fn relay(homeserver_url: String, username: &str, password: &str) -> anyhow
         // let room_id_pairs = room_id_pairs.clone();
         move |ev: OriginalSyncRoomMessageEvent, room: Room| {
             let username = username.clone();
-            let two_way_map = two_way_map.clone();
+            let two_way_map = BTreeMap::new();
+            // let two_way_map = two_way_map.clone();
             async move {
                 on_room_message(ev, room, two_way_map, username).await;
             }
